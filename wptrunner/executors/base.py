@@ -5,6 +5,7 @@
 import hashlib
 import json
 import os
+import time
 import traceback
 import urlparse
 from abc import ABCMeta, abstractmethod
@@ -227,7 +228,7 @@ class RefTestImplementation(object):
         timeout = test.timeout * self.timeout_multiplier
         key = (test.url, viewport_size, dpi)
 
-        if key not in self.screenshot_cache:
+        if True:#key not in self.screenshot_cache:
             success, data = self.executor.screenshot(test, viewport_size, dpi)
 
             if not success:
@@ -260,6 +261,7 @@ class RefTestImplementation(object):
         # of reachings a leaf node with only pass results
 
         stack = list(((test, item[0]), item[1]) for item in reversed(test.references))
+        start = time.time()
         while stack:
             hashes = [None, None]
             screenshots = [None, None]
@@ -273,6 +275,7 @@ class RefTestImplementation(object):
 
                 hashes[i], screenshots[i] = data
 
+            break
             if self.is_pass(hashes[0], hashes[1], relation):
                 if nodes[1].references:
                     stack.extend(list(((nodes[1], item[0]), item[1]) for item in reversed(nodes[1].references)))
@@ -282,14 +285,46 @@ class RefTestImplementation(object):
 
         # We failed, so construct a failure message
 
-        for i, (node, screenshot) in enumerate(zip(nodes, screenshots)):
-            if screenshot is None:
-                success, screenshot = self.retake_screenshot(node, viewport_size, dpi)
-                if success:
-                    screenshots[i] = screenshot
+        #for i, (node, screenshot) in enumerate(zip(nodes, screenshots)):
+        #    if screenshot is None:
+        #        success, screenshot = self.retake_screenshot(node, viewport_size, dpi)
+        #        if success:
+        #            screenshots[i] = screenshot
 
         log_data = [{"url": nodes[0].url, "screenshot": screenshots[0]}, relation,
                     {"url": nodes[1].url, "screenshot": screenshots[1]}]
+
+        captures = [{'time': start, 'shots': screenshots}]
+        while time.time() - start < 10: #True:
+            captures.append({'time': time.time(), 'shots': [None, None]})
+            for i, node in enumerate(nodes):
+                success, screenshot = self.retake_screenshot(node, viewport_size, dpi)
+                if success:
+                    captures[-1]['shots'][i] = screenshot
+
+            if captures[-1]['shots'] == captures[-2]['shots']:
+                pass # break
+
+        rows = ''
+        for capture in captures:
+            rows += '''<tr>
+              <td>%s</td>
+              <td><img src="data:img/png;base64,%s" /></td>
+              <td><img src="data:img/png;base64,%s" /></td>
+            </tr>''' % (1000 * (capture['time'] - captures[0]['time']), capture['shots'][0], capture['shots'][1])
+        report = '''<!DOCTYPE html>
+<html>
+<body>
+<style>img { border: solid 1px #555; }</style>
+<table>
+  <thead><tr><th>Time (ms)</th><th>Actual</th><th>Expected</th></tr></thead>
+  <tbody>%s</tbody>
+</table>
+</body>
+</html>''' % rows
+
+        with open('screenshots.html', 'w') as f:
+            f.write(report)
 
         return {"status": "FAIL",
                 "message": "\n".join(self.message),
